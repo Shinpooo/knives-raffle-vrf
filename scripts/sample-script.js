@@ -32,7 +32,7 @@ async function main() {
 
   console.log("Raffle ticket deployed to:", raffle_ticket.address);
 
-  await raffle_ticket.createRaffle("Raffle1", "test", 0, 500, 30, 100, true)
+  await raffle_ticket.createRaffle("Raffle1", "test", 0, 500, 30, 100, 0, 100000000000000)
   console.log("raffle created")
   for (let i = 0; i < 25; i++) {
     console.log(i)

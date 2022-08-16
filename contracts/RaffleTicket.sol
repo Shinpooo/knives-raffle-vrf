@@ -31,7 +31,7 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
     // this limit based on the network that you select, the size of the request,
     // and the processing of the callback request in the fulfillRandomWords()
     // function.
-    // uint32 callbackGasLimit = 100000;
+    uint32 callbackGasLimit = 100000;
 
     // The default is 3, but you can set this higher.
     uint16 requestConfirmations = 3;
@@ -61,9 +61,11 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         uint max_ticket_wallet;
         uint32 winners_amount;
         uint raffle_id;
+        uint open_timestamp;
+        uint close_timestamp;
+        uint[] random_numbers;
         address[] participants;
         address[] winners;
-        bool is_open;
         mapping (address => bool) has_won;
     }
 
@@ -73,22 +75,44 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         s_subscriptionId = subscriptionId;
     }
 
+    function setRequestConfirmation(uint16 _requestConfirmation) external onlyOwner {
+        requestConfirmations = _requestConfirmation;
+    }
+    function setcallbackGasLimit(uint32 _callbackGasLimit) external onlyOwner {
+        callbackGasLimit = _callbackGasLimit;
+    }
+    function setKeyHash(bytes32 _keyHash) external onlyOwner {
+        keyHash = _keyHash;
+    }
+
+    function setSubscriptionId(uint64 _subscriptionId) external onlyOwner {
+        s_subscriptionId = _subscriptionId;
+    }
+
+    function setVrfCoordinator(address _vrfCoordinator) external onlyOwner {
+        vrfCoordinator = _vrfCoordinator;
+    }
+
       // Assumes the subscription is funded sufficiently.
     function requestRandomWords(uint raffleId) external onlyOwner {
         // Will revert if subscription is not set and funded.
         Raffle storage raffle = raffleIdToRaffle[raffleId];
-        require(raffle.is_open, "Raffle is closed.");
+        require(isRaffleOpen(raffleId), "Raffle is closed.");
         require(raffle.winners_amount < raffle.participants.length, "Not enough participants.");
         current_raffle = raffleId;
-        uint32 numWords = raffle.winners_amount * 2;
-        uint32 callbackGasLimit = 20000 * numWords * 2;
+        uint32 numWords = raffle.winners_amount;
         s_requestId = COORDINATOR.requestRandomWords(
         keyHash,
         s_subscriptionId,
         requestConfirmations,
         callbackGasLimit,
-        raffle.winners_amount * 2
+        numWords
         );
+    }
+
+    function isRaffleOpen(uint raffleId) public view returns (bool){
+        Raffle storage raffle = raffleIdToRaffle[raffleId];
+        return block.timestamp >= raffle.open_timestamp && block.timestamp <= raffle.close_timestamp ? true : false;
     }
 
     function fulfillRandomWords(
@@ -96,17 +120,45 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         uint256[] memory randomWords
     ) internal override {
         Raffle storage raffle = raffleIdToRaffle[current_raffle];
-        uint i = 0;
-        while (raffle.winners.length < raffle.winners_amount){
-            uint random_index = randomWords[i] % raffle.participants.length;
-            address winner = raffle.participants[random_index];
-            if (!raffle.has_won[winner]){
-                raffle.winners.push(winner);
-                raffle.has_won[winner] = true;
-            }
-            i++;
+        for (uint i=0; i < raffle.winners_amount; i++) {
+            raffle.random_numbers.push(randomWords[i]);
         }
+
+        // uint n_participants = raffle.participants.length;
+        // for (uint i=0; i < raffle.winners_amount; i++) {
+        //     uint random_number = randomWords[i];
+        //     uint random_index = random_number % n_participants;
+        //     address winner = raffle.participants[random_index];
+        //     while (raffle.has_won[winner]){
+        //         random_number += 1;
+        //         random_index = random_number % n_participants;
+        //         winner = raffle.participants[random_index];
+        //     }
+        //     raffle.winners.push(winner);
+        //     raffle.has_won[winner] = true;
+        // }
     }
+
+    function pickWinners(uint raffleId) public onlyOwner {
+        Raffle storage raffle = raffleIdToRaffle[raffleId];
+        uint[] memory random_numbers = raffle.random_numbers;
+        uint n_participants = raffle.participants.length;
+        for (uint i=0; i < raffle.winners_amount; i++) {
+            uint random_number = random_numbers[i];
+            uint random_index = random_number % n_participants;
+            address winner = raffle.participants[random_index];
+            while (raffle.has_won[winner]){
+                random_number += 1;
+                random_index = random_number % n_participants;
+                winner = raffle.participants[random_index];
+            }
+            raffle.winners.push(winner);
+            raffle.has_won[winner] = true;
+        }
+
+    }
+
+
 
     // testing
     function addParticipants(uint raffleId, address[] calldata participants) public {
@@ -129,7 +181,7 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
     //     canTransfer[user] = !canTransfer[user];
     // }
 
-    function createRaffle(string memory project_name, string memory image_url, uint price, uint max_ticket, uint max_ticket_wallet, uint32 winners_amount, bool is_open) public onlyOwner {
+    function createRaffle(string memory project_name, string memory image_url, uint price, uint max_ticket, uint max_ticket_wallet, uint32 winners_amount, uint open_timestamp, uint close_timestamp) public onlyOwner {
         _RaffleIdCounter.increment();
         uint raffle_id = _RaffleIdCounter.current();
         Raffle storage new_raffle = raffleIdToRaffle[raffle_id];
@@ -140,10 +192,11 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         new_raffle.max_ticket_wallet = max_ticket_wallet;
         new_raffle.winners_amount = winners_amount;
         new_raffle.raffle_id = raffle_id;
-        new_raffle.is_open = is_open;
+        new_raffle.open_timestamp = open_timestamp;
+        new_raffle.close_timestamp = close_timestamp;
     }
 
-    function editRaffle(uint raffle_id, string memory project_name, string memory image_url, uint price, uint max_ticket, uint max_ticket_wallet, uint32 winners_amount) public onlyOwner {
+    function editRaffle(uint raffle_id, string memory project_name, string memory image_url, uint price, uint max_ticket, uint max_ticket_wallet, uint32 winners_amount, uint open_timestamp, uint close_timestamp) public onlyOwner {
         Raffle storage raffle = raffleIdToRaffle[raffle_id];
         raffle.project_name = project_name;
         raffle.image_url = image_url;
@@ -151,16 +204,15 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         raffle.max_ticket = max_ticket;
         raffle.max_ticket_wallet = max_ticket_wallet;
         raffle.winners_amount = winners_amount;
+        raffle.open_timestamp = open_timestamp;
+        raffle.close_timestamp = close_timestamp;
     }
 
-    function switchOpenRaffle(uint raffle_id) external onlyOwner {
-        Raffle storage raffle = raffleIdToRaffle[raffle_id];
-        raffle.is_open = !raffle.is_open;
-    }
+
 
     function safeMint(uint raffleId) public payable {
         Raffle storage raffle = raffleIdToRaffle[raffleId];
-        require(raffle.is_open, "Raffle is closed.");
+        require(isRaffleOpen(raffleId), "Raffle is closed.");
         _tokenIdCounter.increment();
         uint256 tokenId = _tokenIdCounter.current();
         _safeMint(msg.sender, tokenId);
@@ -181,6 +233,12 @@ contract KnivesLegacyTicket is ERC721, ERC721Enumerable, Pausable, Ownable, VRFC
         Raffle storage raffle = raffleIdToRaffle[raffle_id];
         address[] memory winners = raffle.winners;
         return winners;
+    }
+
+    function getRandomNumbers(uint raffle_id) public view returns (uint[] memory) {
+        Raffle storage raffle = raffleIdToRaffle[raffle_id];
+        uint[] memory random_numbers = raffle.random_numbers;
+        return random_numbers;
     }
 
     function getParticipants(uint raffle_id) public view returns (address[] memory) {
